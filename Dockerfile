@@ -1,55 +1,48 @@
-# ---------- Imagen base ----------
+# Imagen base de Python
 FROM python:3.10-slim
 
-# ---------- Variables de entorno ----------
-ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+# Evita que Python guarde .pyc y buffer
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
 
-# ---------- Instalar dependencias del sistema ----------
+# Instalar dependencias del sistema (incluye git y playwright deps)
 RUN apt-get update && apt-get install -y \
+    git \
     wget \
     curl \
     unzip \
-    git \
-    fonts-liberation \
-    fonts-unifont \
-    libasound2 \
+    xvfb \
+    libnss3 \
     libatk1.0-0 \
     libatk-bridge2.0-0 \
     libcups2 \
-    libdbus-1-3 \
-    libdrm2 \
     libxkbcommon0 \
     libxcomposite1 \
-    libxdamage1 \
-    libxfixes3 \
     libxrandr2 \
     libgbm1 \
-    libgtk-3-0 \
-    libnss3 \
-    libnspr4 \
+    libasound2 \
     libxshmfence1 \
+    libxdamage1 \
+    fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
-# ---------- Establecer directorio de trabajo ----------
+# Crear directorio de trabajo
 WORKDIR /app
 
-# ---------- Actualizar pip ----------
-RUN pip install --upgrade pip
-
-# ---------- Instalar dependencias Python ----------
+# Copiar requirements primero (mejora cache)
 COPY requirements.txt .
+
+# Instalar dependencias de Python
 RUN pip install --no-cache-dir -r requirements.txt
 
-# ---------- Instalar navegadores Playwright ----------
-RUN python -m playwright install chromium
+# Instalar navegadores de Playwright
+RUN playwright install --with-deps chromium
 
-# ---------- Copiar código ----------
+# Copiar el resto del código
 COPY . .
 
-# ---------- Exponer puerto ----------
-EXPOSE 5000
+# Exponer puerto para Render
+EXPOSE 10000
 
-# ---------- Comando de ejecución ----------
+# Comando por defecto
 CMD ["python", "main.py"]
