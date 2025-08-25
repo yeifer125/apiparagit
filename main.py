@@ -24,10 +24,10 @@ def actualizar_historial_git(datos):
         return
 
     os.makedirs(REPO_PATH, exist_ok=True)
-    
-    # Configurar git user
-    subprocess.run(["git", "config", "--global", "user.email", "render@example.com"], check=True)
-    subprocess.run(["git", "config", "--global", "user.name", "RenderBot"], check=True)
+
+    # Configurar git solo localmente (no global)
+    subprocess.run(["git", "-C", REPO_PATH, "config", "user.email", "render@example.com"], check=True)
+    subprocess.run(["git", "-C", REPO_PATH, "config", "user.name", "RenderBot"], check=True)
 
     # Clonar si no existe .git
     if not os.path.exists(os.path.join(REPO_PATH, ".git")):
@@ -50,18 +50,21 @@ def actualizar_historial_git(datos):
     with open(historial_file, "w", encoding="utf-8") as f:
         json.dump(historial, f, ensure_ascii=False, indent=2)
 
-    # Git add, commit y push
+    # Git add
     subprocess.run(["git", "-C", REPO_PATH, "add", "."], check=True)
 
-    # Verificar si hay commits existentes
+    # Commit inicial si no hay commits
     res = subprocess.run(["git", "-C", REPO_PATH, "rev-parse", "--verify", "HEAD"], capture_output=True, text=True)
     if res.returncode != 0:
-        # No hay commits, hacer commit inicial
         subprocess.run(["git", "-C", REPO_PATH, "commit", "-m", "Commit inicial"], check=True)
 
-    # Commit de los nuevos datos
-    subprocess.run(["git", "-C", REPO_PATH, "commit", "-m", f"Añadidos {len(nuevos)} productos al historial"], check=True)
-    subprocess.run(["git", "-C", REPO_PATH, "push"], check=True)
+    # Solo hacer commit si hay cambios
+    res_status = subprocess.run(["git", "-C", REPO_PATH, "status", "--porcelain"], capture_output=True, text=True)
+    if res_status.stdout.strip():
+        subprocess.run(["git", "-C", REPO_PATH, "commit", "-m", f"Añadidos {len(nuevos)} productos al historial"], check=True)
+        subprocess.run(["git", "-C", REPO_PATH, "push"], check=True)
+    else:
+        print("ℹ️ No hay cambios para commitear.")
 
 # ---------------- Funciones PDF/Web ----------------
 async def auto_scroll(page):
