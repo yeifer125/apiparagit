@@ -25,14 +25,16 @@ def actualizar_historial_git(datos):
 
     os.makedirs(REPO_PATH, exist_ok=True)
 
-    # 1️⃣ Clonar si no existe .git
+    # Inicializar git si no existe
     if not os.path.exists(os.path.join(REPO_PATH, ".git")):
-        subprocess.run(["git", "clone", REPO_URL, REPO_PATH], check=True)
+        subprocess.run(["git", "-C", REPO_PATH, "init"], check=True)
+        subprocess.run(["git", "-C", REPO_PATH, "remote", "add", "origin", REPO_URL], check=True)
 
-    # 2️⃣ Configurar git solo localmente
+    # Configurar git local (solo para este repo)
     subprocess.run(["git", "-C", REPO_PATH, "config", "user.email", "render@example.com"], check=True)
     subprocess.run(["git", "-C", REPO_PATH, "config", "user.name", "RenderBot"], check=True)
 
+    # Cargar historial existente
     historial_file = os.path.join(REPO_PATH, "historial.json")
     if os.path.exists(historial_file):
         with open(historial_file, "r", encoding="utf-8") as f:
@@ -50,21 +52,25 @@ def actualizar_historial_git(datos):
     with open(historial_file, "w", encoding="utf-8") as f:
         json.dump(historial, f, ensure_ascii=False, indent=2)
 
-    # Git add
+    # Git add y commit
     subprocess.run(["git", "-C", REPO_PATH, "add", "."], check=True)
 
-    # Commit inicial si no hay commits
+    # Verificar si hay commits
     res = subprocess.run(["git", "-C", REPO_PATH, "rev-parse", "--verify", "HEAD"], capture_output=True, text=True)
     if res.returncode != 0:
+        # Commit inicial
         subprocess.run(["git", "-C", REPO_PATH, "commit", "-m", "Commit inicial"], check=True)
-
-    # Solo hacer commit si hay cambios
-    res_status = subprocess.run(["git", "-C", REPO_PATH, "status", "--porcelain"], capture_output=True, text=True)
-    if res_status.stdout.strip():
-        subprocess.run(["git", "-C", REPO_PATH, "commit", "-m", f"Añadidos {len(nuevos)} productos al historial"], check=True)
-        subprocess.run(["git", "-C", REPO_PATH, "push"], check=True)
+        subprocess.run(["git", "-C", REPO_PATH, "branch", "-M", "main"], check=True)
+        subprocess.run(["git", "-C", REPO_PATH, "push", "-u", "origin", "main"], check=True)
     else:
-        print("ℹ️ No hay cambios para commitear.")
+        # Commit normal si hay cambios
+        try:
+            subprocess.run(["git", "-C", REPO_PATH, "commit", "-m", f"Añadidos {len(nuevos)} productos al historial"], check=True)
+        except subprocess.CalledProcessError:
+            # No hay cambios para commit
+            print("ℹ️ No hay cambios para commitear.")
+        # Push normal
+        subprocess.run(["git", "-C", REPO_PATH, "push"], check=True)
 
 # ---------------- Funciones PDF/Web ----------------
 async def auto_scroll(page):
