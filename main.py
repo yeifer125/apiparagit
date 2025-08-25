@@ -3,18 +3,57 @@ import os
 import json
 import threading
 import time
+import subprocess
 from datetime import datetime
 from collections import OrderedDict
 from flask import Flask, Response, request
 from playwright.async_api import async_playwright
 import pdfplumber
-import subprocess
 
 # ---------------- Rutas de archivos ----------------
 PDF_FOLDER = os.path.join(os.path.dirname(__file__), "pdfs")
 CACHE_FILE = os.path.join(os.path.dirname(__file__), "datos_cache.json")
+
+# ---------------- Git historial ----------------
 REPO_URL = os.environ.get("REPO_URL")
 REPO_PATH = os.path.join(os.path.dirname(__file__), "iadatos")
+
+def actualizar_historial_git(datos):
+    if not REPO_URL:
+        print("[WARN] REPO_URL no configurado, no se guardará historial.")
+        return
+
+    os.makedirs(REPO_PATH, exist_ok=True)
+    
+    # Configurar git user
+    subprocess.run(["git", "config", "--global", "user.email", "render@example.com"], check=True)
+    subprocess.run(["git", "config", "--global", "user.name", "RenderBot"], check=True)
+
+    # Clonar si no existe .git
+    if not os.path.exists(os.path.join(REPO_PATH, ".git")):
+        subprocess.run(["git", "clone", REPO_URL, REPO_PATH], check=True)
+
+    historial_file = os.path.join(REPO_PATH, "historial.json")
+    if os.path.exists(historial_file):
+        with open(historial_file, "r", encoding="utf-8") as f:
+            historial = json.load(f)
+    else:
+        historial = []
+
+    # Agregar solo nuevos productos
+    nuevos = [d for d in datos if d not in historial]
+    if not nuevos:
+        print("✅ No hay productos nuevos para agregar al historial.")
+        return
+
+    historial.extend(nuevos)
+    with open(historial_file, "w", encoding="utf-8") as f:
+        json.dump(historial, f, ensure_ascii=False, indent=2)
+
+    # Git add, commit y push
+    subprocess.run(["git", "-C", REPO_PATH, "add", "."], check=True)
+    subprocess.run(["git", "-C", REPO_PATH, "commit", "-m", f"Añadidos {len(nuevos)} productos al historial"], check=True)
+    subprocess.run(["git", "-C", REPO_PATH, "push"], check=True)
 
 # ---------------- Funciones PDF/Web ----------------
 async def auto_scroll(page):
@@ -55,14 +94,14 @@ async def descargar_archivo(context, url, nombre):
     if response.status == 200:
         contenido = await response.body()
         if not contenido.startswith(b"%PDF"):
-            print(f"[WARN] El archivo {url} no es un PDF válido, se ignora.")
+            print(f"[WARN] El archivo {url} no es un PDF válido.")
             return None
         with open(ruta_archivo, "wb") as f:
             f.write(contenido)
         return ruta_archivo
     return None
 
-# ---------------- Función para extraer productos ----------------
+# ---------------- Extraer productos PDF ----------------
 def extraer_todo_pdf(ruta_pdf):
     resultados = []
     fecha = ""
@@ -119,45 +158,7 @@ def parse_fecha(fecha_str):
     except:
         return datetime.min
 
-# ---------------- Historial Git ----------------
-def actualizar_historial_git(todos_resultados):
-    if not REPO_URL:
-        print("[WARN] REPO_URL no configurado, no se guardará historial.")
-        return
-
-    os.makedirs(REPO_PATH, exist_ok=True)
-    if not os.path.exists(os.path.join(REPO_PATH, ".git")):
-        subprocess.run(["git", "clone", REPO_URL, REPO_PATH], check=True)
-
-    os.chdir(REPO_PATH)
-    subprocess.run(["git", "config", "user.email", "render@example.com"], check=True)
-    subprocess.run(["git", "config", "user.name", "Render Bot"], check=True)
-
-    historial_file = os.path.join(REPO_PATH, "historial.json")
-    if os.path.exists(historial_file):
-        with open(historial_file, "r", encoding="utf-8") as f:
-            historial = json.load(f)
-    else:
-        historial = []
-
-    existentes = {(d["producto"], d["fecha"]) for d in historial}
-    nuevos = [d for d in todos_resultados if (d["producto"], d["fecha"]) not in existentes]
-
-    if not nuevos:
-        print("✅ No hay productos nuevos para agregar al historial.")
-        return
-
-    historial.extend(nuevos)
-
-    with open(historial_file, "w", encoding="utf-8") as f:
-        json.dump(historial, f, ensure_ascii=False, indent=2)
-
-    subprocess.run(["git", "add", "."], check=True)
-    subprocess.run(["git", "commit", "-m", f"Añadidos {len(nuevos)} productos al historial"], check=True)
-    subprocess.run(["git", "push"], check=True)
-    print(f"✅ {len(nuevos)} productos agregados al historial Git.")
-
-# ---------------- Función principal de scraping ----------------
+# ---------------- Scraping principal ----------------
 async def main_scraping():
     rutas_pdfs = []
     async with async_playwright() as p:
@@ -199,7 +200,7 @@ async def main_scraping():
     actualizar_historial_git(todos_resultados)
     print(f"[{datetime.now()}] ✅ Scraper ejecutado. {len(todos_resultados)} productos guardados en '{CACHE_FILE}'.")
 
-# ---------------- Tarea periódica cada 30m ----------------
+# ---------------- Tarea periódica ----------------
 def tarea_periodica():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -227,7 +228,6 @@ def index():
 def obtener_precios():
     ip_cliente = obtener_ip_real()
     print(f"[LOG] /precios accedido desde IP: {ip_cliente}")
-
     if os.path.exists(CACHE_FILE):
         with open(CACHE_FILE, "r", encoding="utf-8") as f:
             datos = json.load(f)
@@ -239,7 +239,6 @@ def obtener_precios():
 def actualizar():
     ip_cliente = obtener_ip_real()
     print(f"[LOG] /actualizar accedido desde IP: {ip_cliente}")
-
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -252,6 +251,11 @@ def actualizar():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
 
+    # Scraping inicial
     threading.Thread(target=lambda: asyncio.run(main_scraping()), daemon=True).start()
+
+    # Hilo periódico
     threading.Thread(target=tarea_periodica, daemon=True).start()
+
+    # Ejecutar Flask
     app.run(host="0.0.0.0", port=port)
