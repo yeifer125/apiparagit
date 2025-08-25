@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     wget \
     curl \
     unzip \
+    git \
     fonts-liberation \
     fonts-unifont \
     libasound2 \
