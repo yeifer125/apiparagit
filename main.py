@@ -13,12 +13,9 @@ import subprocess
 # ---------------- Rutas de archivos ----------------
 PDF_FOLDER = os.path.join(os.path.dirname(__file__), "pdfs")
 CACHE_FILE = os.path.join(os.path.dirname(__file__), "datos_cache.json")
-HISTORIAL_REPO = os.path.join(os.path.dirname(__file__), "iadatos")
-HISTORIAL_FILE = os.path.join(HISTORIAL_REPO, "historial.json")
-
-# ---------------- GitHub repo privado ----------------
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
-REPO_URL = f"https://{GITHUB_TOKEN}@github.com/yeifer125/iadatos.git"
+REPO_URL = f"https://{os.environ.get('GITHUB_TOKEN')}@github.com/yeifer125/iadatos.git"
+REPO_PATH = os.path.join(os.path.dirname(__file__), "iadatos")
+HISTORIAL_FILE = os.path.join(REPO_PATH, "historial.json")
 
 # ---------------- Funciones PDF/Web ----------------
 async def auto_scroll(page):
@@ -123,44 +120,42 @@ def parse_fecha(fecha_str):
     except:
         return datetime.min
 
-# ---------------- Guardar en historial ----------------
-def guardar_en_historial(nuevos_datos):
-    os.makedirs(HISTORIAL_REPO, exist_ok=True)
+# ---------------- Función de historial Git ----------------
+def actualizar_historial_git(nuevos_productos):
+    # 🔹 Clonar o pull
+    if not os.path.exists(REPO_PATH):
+        subprocess.run(["git", "clone", REPO_URL, REPO_PATH], check=True)
+    else:
+        subprocess.run(["git", "-C", REPO_PATH, "pull"], check=True)
 
-    if not os.path.exists(os.path.join(HISTORIAL_REPO, ".git")):
-        try:
-            subprocess.run(["git", "clone", REPO_URL, HISTORIAL_REPO], check=True)
-        except Exception as e:
-            print(f"[ERROR] No se pudo clonar el repo: {e}")
-
+    # 🔹 Leer historial
     if os.path.exists(HISTORIAL_FILE):
         with open(HISTORIAL_FILE, "r", encoding="utf-8") as f:
             historial = json.load(f)
     else:
         historial = []
 
-    existentes = {json.dumps(item, ensure_ascii=False) for item in historial}
-    nuevos = [item for item in nuevos_datos if json.dumps(item, ensure_ascii=False) not in existentes]
-
+    # 🔹 Agregar solo productos nuevos
+    existentes = {(p["producto"], p["fecha"]) for p in historial}
+    nuevos = [p for p in nuevos_productos if (p["producto"], p["fecha"]) not in existentes]
     if not nuevos:
         print("✅ No hay productos nuevos para agregar al historial.")
         return
 
     historial.extend(nuevos)
-
     with open(HISTORIAL_FILE, "w", encoding="utf-8") as f:
         json.dump(historial, f, ensure_ascii=False, indent=2)
 
-    try:
-        subprocess.run(["git", "-C", HISTORIAL_REPO, "pull"], check=True)
-        subprocess.run(["git", "-C", HISTORIAL_REPO, "add", HISTORIAL_FILE], check=True)
-        subprocess.run(["git", "-C", HISTORIAL_REPO, "config", "user.email", "render@app.com"], check=True)
-        subprocess.run(["git", "-C", HISTORIAL_REPO, "config", "user.name", "Render Bot"], check=True)
-        subprocess.run(["git", "-C", HISTORIAL_REPO, "commit", "-m", f"Añadidos {len(nuevos)} productos al historial"], check=True)
-        subprocess.run(["git", "-C", HISTORIAL_REPO, "push"], check=True)
-        print(f"✅ {len(nuevos)} productos añadidos al historial y enviados a GitHub.")
-    except Exception as e:
-        print(f"[ERROR] Falló la operación de Git: {e}. Se continuará sin interrumpir el scraping.")
+    # 🔹 Configurar Git antes del commit
+    subprocess.run(["git", "-C", REPO_PATH, "config", "user.name", "RenderBot"], check=True)
+    subprocess.run(["git", "-C", REPO_PATH, "config", "user.email", "render@bot.com"], check=True)
+
+    # 🔹 Commit y push
+    subprocess.run(["git", "-C", REPO_PATH, "add", "."], check=True)
+    subprocess.run(["git", "-C", REPO_PATH, "commit", "-m", f"Añadidos {len(nuevos)} productos al historial"], check=True)
+    subprocess.run(["git", "-C", REPO_PATH, "push"], check=True)
+
+    print(f"✅ Se añadieron {len(nuevos)} productos al historial y se hizo push al repo.")
 
 # ---------------- Función principal de scraping ----------------
 async def main_scraping():
@@ -201,7 +196,8 @@ async def main_scraping():
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(todos_resultados, f, ensure_ascii=False, indent=2)
 
-    guardar_en_historial(todos_resultados)
+    # 🔹 Actualizar historial Git
+    actualizar_historial_git(todos_resultados)
 
     print(f"[{datetime.now()}] ✅ Scraper ejecutado. {len(todos_resultados)} productos guardados en '{CACHE_FILE}'.")
 
