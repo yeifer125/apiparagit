@@ -3,3 +3,4 @@ playwright
 pdfplumber
 PyPDF2
 pandas
+asyncio
