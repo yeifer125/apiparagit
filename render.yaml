@@ -12,3 +12,5 @@ services:
         value: "1"
       - key: PLAYWRIGHT_BROWSERS_PATH
         value: "/ms-playwright"
+      - key: GITHUB_TOKEN
+        # El valor se configura solo en la UI de Render, no en el YAML
