@@ -52,6 +52,14 @@ def actualizar_historial_git(datos):
 
     # Git add, commit y push
     subprocess.run(["git", "-C", REPO_PATH, "add", "."], check=True)
+
+    # Verificar si hay commits existentes
+    res = subprocess.run(["git", "-C", REPO_PATH, "rev-parse", "--verify", "HEAD"], capture_output=True, text=True)
+    if res.returncode != 0:
+        # No hay commits, hacer commit inicial
+        subprocess.run(["git", "-C", REPO_PATH, "commit", "-m", "Commit inicial"], check=True)
+
+    # Commit de los nuevos datos
     subprocess.run(["git", "-C", REPO_PATH, "commit", "-m", f"Añadidos {len(nuevos)} productos al historial"], check=True)
     subprocess.run(["git", "-C", REPO_PATH, "push"], check=True)
 
