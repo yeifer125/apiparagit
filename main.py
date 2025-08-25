@@ -127,21 +127,18 @@ def parse_fecha(fecha_str):
 def guardar_en_historial(nuevos_datos):
     os.makedirs(HISTORIAL_REPO, exist_ok=True)
 
-    # Clonar repo si no existe
     if not os.path.exists(os.path.join(HISTORIAL_REPO, ".git")):
         try:
             subprocess.run(["git", "clone", REPO_URL, HISTORIAL_REPO], check=True)
         except Exception as e:
             print(f"[ERROR] No se pudo clonar el repo: {e}")
 
-    # Cargar historial existente
     if os.path.exists(HISTORIAL_FILE):
         with open(HISTORIAL_FILE, "r", encoding="utf-8") as f:
             historial = json.load(f)
     else:
         historial = []
 
-    # Evitar duplicados
     existentes = {json.dumps(item, ensure_ascii=False) for item in historial}
     nuevos = [item for item in nuevos_datos if json.dumps(item, ensure_ascii=False) not in existentes]
 
@@ -154,7 +151,6 @@ def guardar_en_historial(nuevos_datos):
     with open(HISTORIAL_FILE, "w", encoding="utf-8") as f:
         json.dump(historial, f, ensure_ascii=False, indent=2)
 
-    # Subir cambios a GitHub
     try:
         subprocess.run(["git", "-C", HISTORIAL_REPO, "pull"], check=True)
         subprocess.run(["git", "-C", HISTORIAL_REPO, "add", HISTORIAL_FILE], check=True)
@@ -205,7 +201,6 @@ async def main_scraping():
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(todos_resultados, f, ensure_ascii=False, indent=2)
 
-    # 🔹 Guardar también en historial
     guardar_en_historial(todos_resultados)
 
     print(f"[{datetime.now()}] ✅ Scraper ejecutado. {len(todos_resultados)} productos guardados en '{CACHE_FILE}'.")
