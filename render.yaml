@@ -4,8 +4,8 @@ services:
     env: docker
     plan: free
     autoDeploy: true
-    buildCommand: ""   # Render usará el Dockerfile directamente
-    startCommand: ""   # También lo toma del CMD del Dockerfile
+    buildCommand: ""      # Render usará el Dockerfile directamente
+    startCommand: ""      # CMD del Dockerfile
     healthCheckPath: /
     envVars:
       - key: PYTHONUNBUFFERED
@@ -13,4 +13,4 @@ services:
       - key: PLAYWRIGHT_BROWSERS_PATH
         value: "/ms-playwright"
       - key: GITHUB_TOKEN
-        # El valor se configura solo en la UI de Render, no en el YAML
+        value: ""   # Aquí se agrega desde el panel de Render tu token de GitHub
