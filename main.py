@@ -25,13 +25,13 @@ def actualizar_historial_git(datos):
 
     os.makedirs(REPO_PATH, exist_ok=True)
 
-    # Configurar git solo localmente (no global)
-    subprocess.run(["git", "-C", REPO_PATH, "config", "user.email", "render@example.com"], check=True)
-    subprocess.run(["git", "-C", REPO_PATH, "config", "user.name", "RenderBot"], check=True)
-
-    # Clonar si no existe .git
+    # 1️⃣ Clonar si no existe .git
     if not os.path.exists(os.path.join(REPO_PATH, ".git")):
         subprocess.run(["git", "clone", REPO_URL, REPO_PATH], check=True)
+
+    # 2️⃣ Configurar git solo localmente
+    subprocess.run(["git", "-C", REPO_PATH, "config", "user.email", "render@example.com"], check=True)
+    subprocess.run(["git", "-C", REPO_PATH, "config", "user.name", "RenderBot"], check=True)
 
     historial_file = os.path.join(REPO_PATH, "historial.json")
     if os.path.exists(historial_file):
