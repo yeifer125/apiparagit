@@ -4,8 +4,7 @@ FROM python:3.10-slim
 # ---------- Variables de entorno ----------
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
-    GITHUB_TOKEN=${GITHUB_TOKEN}
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 # ---------- Instalar dependencias del sistema ----------
 RUN apt-get update && apt-get install -y \
@@ -33,18 +32,20 @@ RUN apt-get update && apt-get install -y \
     libxshmfence1 \
     && rm -rf /var/lib/apt/lists/*
 
-# ---------- Directorio de trabajo ----------
+# ---------- Establecer directorio de trabajo ----------
 WORKDIR /app
 
-# ---------- Copiar requirements y actualizar pip ----------
-COPY requirements.txt .
+# ---------- Actualizar pip ----------
 RUN pip install --upgrade pip
+
+# ---------- Copiar requirements ----------
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ---------- Instalar navegadores Playwright ----------
 RUN python -m playwright install chromium
 
-# ---------- Copiar el código ----------
+# ---------- Copiar código ----------
 COPY . .
 
 # ---------- Exponer puerto ----------

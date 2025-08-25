@@ -4,13 +4,17 @@ services:
     env: docker
     plan: free
     autoDeploy: true
-    buildCommand: ""      # Render usará el Dockerfile directamente
-    startCommand: ""      # CMD del Dockerfile
+    buildCommand: ""
+    startCommand: ""
     healthCheckPath: /
     envVars:
+      - key: PORT
+        value: "5000"
+      - key: REPO_URL
+        value: "https://<GITHUB_TOKEN>@github.com/yeifer125/iadatos.git"
+      - key: GITHUB_TOKEN
+        fromSecret: GITHUB_TOKEN
       - key: PYTHONUNBUFFERED
         value: "1"
       - key: PLAYWRIGHT_BROWSERS_PATH
         value: "/ms-playwright"
-      - key: GITHUB_TOKEN
-        value: ""   # Aquí se agrega desde el panel de Render tu token de GitHub
