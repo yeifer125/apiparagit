@@ -8,10 +8,17 @@ from collections import OrderedDict
 from flask import Flask, Response, request
 from playwright.async_api import async_playwright
 import pdfplumber
+import subprocess
 
 # ---------------- Rutas de archivos ----------------
 PDF_FOLDER = os.path.join(os.path.dirname(__file__), "pdfs")
 CACHE_FILE = os.path.join(os.path.dirname(__file__), "datos_cache.json")
+
+# Repo de historial
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")  # Variable de entorno en Render
+REPO_URL = f"https://{GITHUB_TOKEN}@github.com/yeifer125/iadatos.git"
+REPO_PATH = os.path.join(os.path.dirname(__file__), "iadatos")
+HISTORIAL_FILE = os.path.join(REPO_PATH, "historial_cache.json")
 
 # ---------------- Funciones PDF/Web ----------------
 async def auto_scroll(page):
@@ -51,7 +58,6 @@ async def descargar_archivo(context, url, nombre):
     response = await context.request.get(url)
     if response.status == 200:
         contenido = await response.body()
-        # 🔍 Validar si realmente es PDF
         if not contenido.startswith(b"%PDF"):
             print(f"[WARN] El archivo {url} no es un PDF válido, se ignora.")
             return None
@@ -117,11 +123,46 @@ def parse_fecha(fecha_str):
     except:
         return datetime.min
 
+# ---------------- Función historial Git segura ----------------
+def actualizar_historial_git(nuevos_datos):
+    try:
+        # Clonar repo si no existe
+        if not os.path.exists(REPO_PATH):
+            subprocess.run(["git", "clone", REPO_URL, REPO_PATH], check=True)
+        else:
+            # Hacer pull antes de actualizar
+            subprocess.run(["git", "-C", REPO_PATH, "pull"], check=True)
+
+        # Leer historial existente
+        if os.path.exists(HISTORIAL_FILE):
+            with open(HISTORIAL_FILE, "r", encoding="utf-8") as f:
+                historial = json.load(f)
+        else:
+            historial = []
+
+        historial_set = {tuple(item.items()) for item in historial}
+        datos_a_agregar = [item for item in nuevos_datos if tuple(item.items()) not in historial_set]
+
+        if datos_a_agregar:
+            historial.extend(datos_a_agregar)
+            with open(HISTORIAL_FILE, "w", encoding="utf-8") as f:
+                json.dump(historial, f, ensure_ascii=False, indent=2)
+            
+            # Git commit y push
+            subprocess.run(["git", "-C", REPO_PATH, "add", "."], check=True)
+            subprocess.run(["git", "-C", REPO_PATH, "commit", "-m", f"Añadidos {len(datos_a_agregar)} productos al historial"], check=True)
+            subprocess.run(["git", "-C", REPO_PATH, "push"], check=True)
+            
+            print(f"[{datetime.now()}] ✅ {len(datos_a_agregar)} productos agregados al historial y subidos a GitHub.")
+        else:
+            print(f"[{datetime.now()}] ✅ No hay productos nuevos para agregar al historial.")
+    except subprocess.CalledProcessError as e:
+        print(f"[ERROR] Falló la operación de Git: {e}. Se continuará sin interrumpir el scraping.")
+
 # ---------------- Función principal de scraping ----------------
 async def main_scraping():
     rutas_pdfs = []
     async with async_playwright() as p:
-        # 🔹 Emulación de móvil (iPhone 14)
         iphone = p.devices["iPhone 14"]
         browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
         context = await browser.new_context(**iphone)
@@ -154,8 +195,12 @@ async def main_scraping():
 
     todos_resultados.sort(key=lambda x: parse_fecha(x["fecha"]), reverse=True)
 
+    # Guardar cache local
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(todos_resultados, f, ensure_ascii=False, indent=2)
+
+    # Guardar historial seguro en GitHub
+    actualizar_historial_git(todos_resultados)
 
     print(f"[{datetime.now()}] ✅ Scraper ejecutado. {len(todos_resultados)} productos guardados en '{CACHE_FILE}'.")
 
@@ -212,10 +257,10 @@ def actualizar():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
 
-    # 🚀 Lanzar scraping inicial en segundo plano (no bloquea Render)
+    # Lanzar scraping inicial en segundo plano (no bloquea Flask)
     threading.Thread(target=lambda: asyncio.run(main_scraping()), daemon=True).start()
 
-    # 🚀 Hilo para actualizar scraper cada 30 minutos
+    # Hilo para actualizar scraper cada 30 minutos
     threading.Thread(target=tarea_periodica, daemon=True).start()
 
     # Ejecutar Flask
