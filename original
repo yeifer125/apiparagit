@@ -31,17 +31,18 @@ def actualizar_historial_git(datos):
         shutil.rmtree(REPO_PATH)
 
     # Clonar repo si no existe
-    if not os.path.exists(REPO_PATH):
+    if not os.path.exists(os.path.join(REPO_PATH, ".git")):
         subprocess.run(["git", "clone", REPO_URL, REPO_PATH], check=True)
         os.chdir(REPO_PATH)
+
+        # Crear o cambiar a rama main
+        res = subprocess.run(["git", "branch", "--list", BRANCH_NAME], capture_output=True, text=True)
+        if BRANCH_NAME not in res.stdout:
+            subprocess.run(["git", "checkout", "-b", BRANCH_NAME], check=True)
+        else:
+            subprocess.run(["git", "checkout", BRANCH_NAME], check=True)
     else:
         os.chdir(REPO_PATH)
-
-    # Crear o cambiar a rama main
-    res = subprocess.run(["git", "branch", "--list", BRANCH_NAME], capture_output=True, text=True)
-    if BRANCH_NAME not in res.stdout:
-        subprocess.run(["git", "checkout", "-b", BRANCH_NAME], check=True)
-    else:
         subprocess.run(["git", "checkout", BRANCH_NAME], check=True)
 
     # Configurar usuario local
@@ -70,10 +71,14 @@ def actualizar_historial_git(datos):
     status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
     if status.stdout.strip():
         subprocess.run(["git", "commit", "-m", f"Añadidos {len(nuevos)} productos al historial"], check=True)
+
+        # Intentar pull con rebase (si ya existe remoto)
         try:
             subprocess.run(["git", "pull", "--rebase", "origin", BRANCH_NAME], check=True)
         except subprocess.CalledProcessError:
             print("[WARN] No se pudo hacer pull, puede ser el primer push.")
+
+        # Push
         subprocess.run(["git", "push", "origin", BRANCH_NAME], check=True)
     else:
         print("✅ No hay cambios para hacer commit.")
