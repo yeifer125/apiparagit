@@ -16,9 +16,10 @@ PDF_FOLDER = os.path.join(os.path.dirname(__file__), "pdfs")
 CACHE_FILE = os.path.join(os.path.dirname(__file__), "datos_cache.json")
 
 # ---------------- Git historial ----------------
-REPO_URL = os.environ.get("REPO_URL")
+REPO_URL = os.environ.get("REPO_URL")  # En Render la configuras en ENV
 REPO_PATH = os.path.join(os.path.dirname(__file__), "iadatos")
 BRANCH_NAME = "main"
+
 
 def actualizar_historial_git(datos):
     if not REPO_URL:
@@ -33,8 +34,13 @@ def actualizar_historial_git(datos):
     if not os.path.exists(os.path.join(REPO_PATH, ".git")):
         subprocess.run(["git", "clone", REPO_URL, REPO_PATH], check=True)
         os.chdir(REPO_PATH)
-        # Cambiar a main si no existe
-        subprocess.run(["git", "checkout", "-b", BRANCH_NAME], check=True)
+
+        # Crear o cambiar a rama main
+        res = subprocess.run(["git", "branch", "--list", BRANCH_NAME], capture_output=True, text=True)
+        if BRANCH_NAME not in res.stdout:
+            subprocess.run(["git", "checkout", "-b", BRANCH_NAME], check=True)
+        else:
+            subprocess.run(["git", "checkout", BRANCH_NAME], check=True)
     else:
         os.chdir(REPO_PATH)
         subprocess.run(["git", "checkout", BRANCH_NAME], check=True)
@@ -65,12 +71,18 @@ def actualizar_historial_git(datos):
     status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
     if status.stdout.strip():
         subprocess.run(["git", "commit", "-m", f"Añadidos {len(nuevos)} productos al historial"], check=True)
-        # Pull con rebase para sincronizar con remoto
-        subprocess.run(["git", "pull", "--rebase", "origin", BRANCH_NAME], check=True)
+
+        # Intentar pull con rebase (si ya existe remoto)
+        try:
+            subprocess.run(["git", "pull", "--rebase", "origin", BRANCH_NAME], check=True)
+        except subprocess.CalledProcessError:
+            print("[WARN] No se pudo hacer pull, puede ser el primer push.")
+
         # Push
         subprocess.run(["git", "push", "origin", BRANCH_NAME], check=True)
     else:
         print("✅ No hay cambios para hacer commit.")
+
 
 # ---------------- Funciones PDF/Web ----------------
 async def auto_scroll(page):
@@ -92,6 +104,7 @@ async def auto_scroll(page):
         }
     """)
 
+
 async def extraer_documentos(page_or_frame):
     return await page_or_frame.eval_on_selector_all(
         "a",
@@ -101,6 +114,7 @@ async def extraer_documentos(page_or_frame):
             .map(a => ({texto: a.innerText.trim(), href: a.href}))
         """
     )
+
 
 async def descargar_archivo(context, url, nombre):
     os.makedirs(PDF_FOLDER, exist_ok=True)
@@ -117,6 +131,7 @@ async def descargar_archivo(context, url, nombre):
             f.write(contenido)
         return ruta_archivo
     return None
+
 
 # ---------------- Extraer productos PDF ----------------
 def extraer_todo_pdf(ruta_pdf):
@@ -163,11 +178,13 @@ def extraer_todo_pdf(ruta_pdf):
                 ]))
     return resultados
 
+
 def parse_fecha(fecha_str):
     try:
         return datetime.strptime(fecha_str, "%d/%m/%Y")
     except:
         return datetime.min
+
 
 # ---------------- Scraping principal ----------------
 async def main_scraping():
@@ -211,6 +228,7 @@ async def main_scraping():
     actualizar_historial_git(todos_resultados)
     print(f"[{datetime.now()}] ✅ Scraper ejecutado. {len(todos_resultados)} productos guardados en '{CACHE_FILE}'.")
 
+
 # ---------------- Tarea periódica ----------------
 def tarea_periodica():
     loop = asyncio.new_event_loop()
@@ -223,17 +241,21 @@ def tarea_periodica():
         finally:
             time.sleep(30 * 60)
 
+
 # ---------------- API Flask ----------------
 app = Flask(__name__)
 
+
 def obtener_ip_real():
     return request.headers.get("X-Forwarded-For", request.remote_addr)
+
 
 @app.route("/")
 def index():
     ip_cliente = obtener_ip_real()
     print(f"[LOG] / accedido desde IP: {ip_cliente}")
     return "API PIMA funcionando. Usa /precios para ver los datos."
+
 
 @app.route("/precios", methods=["GET"])
 def obtener_precios():
@@ -246,6 +268,7 @@ def obtener_precios():
     else:
         return Response(json.dumps({"error": "No existe el archivo de cache"}, ensure_ascii=False), mimetype="application/json"), 404
 
+
 @app.route("/actualizar", methods=["GET"])
 def actualizar():
     ip_cliente = obtener_ip_real()
@@ -257,6 +280,7 @@ def actualizar():
         return Response(json.dumps({"status": "ok", "mensaje": "Datos actualizados manualmente"}, ensure_ascii=False), mimetype="application/json")
     except Exception as e:
         return Response(json.dumps({"status": "error", "mensaje": str(e)}, ensure_ascii=False), mimetype="application/json"), 500
+
 
 # ---------------- Ejecutar ----------------
 if __name__ == "__main__":

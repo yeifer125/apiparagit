@@ -5,7 +5,7 @@ FROM python:3.10-slim
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
-    REPO_URL=${REPO_URL}
+    REPO_URL=""
 
 # ---------- Instalar dependencias del sistema ----------
 RUN apt-get update && apt-get install -y \
@@ -30,6 +30,10 @@ RUN apt-get update && apt-get install -y \
     libnss3 \
     libnspr4 \
     libxshmfence1 \
+    libx11-6 \
+    gstreamer1.0-libav \
+    gstreamer1.0-plugins-good \
+    ca-certificates \
     git \
     && rm -rf /var/lib/apt/lists/*
 
