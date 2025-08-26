@@ -16,12 +16,16 @@ PDF_FOLDER = os.path.join(os.path.dirname(__file__), "pdfs")
 CACHE_FILE = os.path.join(os.path.dirname(__file__), "datos_cache.json")
 
 # ---------------- Git historial ----------------
-REPO_URL = os.environ.get("REPO_URL")  # En Render la configuras en ENV
+REPO_URL = os.environ.get("REPO_URL")
 REPO_PATH = os.path.join(os.path.dirname(__file__), "iadatos")
 BRANCH_NAME = "main"
 
+# Variables para API
+ultima_ejecucion_scraper = None
+ultima_actualizacion_git = None
 
 def actualizar_historial_git(datos):
+    global ultima_actualizacion_git
     if not REPO_URL:
         print("[WARN] REPO_URL no configurado, no se guardará historial.")
         return
@@ -31,11 +35,9 @@ def actualizar_historial_git(datos):
         shutil.rmtree(REPO_PATH)
 
     # Clonar repo si no existe
-    if not os.path.exists(REPO_PATH):
+    if not os.path.exists(os.path.join(REPO_PATH, ".git")):
         subprocess.run(["git", "clone", REPO_URL, REPO_PATH], check=True)
-        os.chdir(REPO_PATH)
-    else:
-        os.chdir(REPO_PATH)
+    os.chdir(REPO_PATH)
 
     # Crear o cambiar a rama main
     res = subprocess.run(["git", "branch", "--list", BRANCH_NAME], capture_output=True, text=True)
@@ -55,7 +57,6 @@ def actualizar_historial_git(datos):
     else:
         historial = []
 
-    # Agregar solo nuevos productos
     nuevos = [d for d in datos if d not in historial]
     if not nuevos:
         print("✅ No hay productos nuevos para agregar al historial.")
@@ -75,9 +76,9 @@ def actualizar_historial_git(datos):
         except subprocess.CalledProcessError:
             print("[WARN] No se pudo hacer pull, puede ser el primer push.")
         subprocess.run(["git", "push", "origin", BRANCH_NAME], check=True)
+        ultima_actualizacion_git = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     else:
         print("✅ No hay cambios para hacer commit.")
-
 
 # ---------------- Funciones PDF/Web ----------------
 async def auto_scroll(page):
@@ -99,7 +100,6 @@ async def auto_scroll(page):
         }
     """)
 
-
 async def extraer_documentos(page_or_frame):
     return await page_or_frame.eval_on_selector_all(
         "a",
@@ -109,7 +109,6 @@ async def extraer_documentos(page_or_frame):
             .map(a => ({texto: a.innerText.trim(), href: a.href}))
         """
     )
-
 
 async def descargar_archivo(context, url, nombre):
     os.makedirs(PDF_FOLDER, exist_ok=True)
@@ -126,7 +125,6 @@ async def descargar_archivo(context, url, nombre):
             f.write(contenido)
         return ruta_archivo
     return None
-
 
 # ---------------- Extraer productos PDF ----------------
 def extraer_todo_pdf(ruta_pdf):
@@ -173,16 +171,15 @@ def extraer_todo_pdf(ruta_pdf):
                 ]))
     return resultados
 
-
 def parse_fecha(fecha_str):
     try:
         return datetime.strptime(fecha_str, "%d/%m/%Y")
     except:
         return datetime.min
 
-
 # ---------------- Scraping principal ----------------
 async def main_scraping():
+    global ultima_ejecucion_scraper
     rutas_pdfs = []
     async with async_playwright() as p:
         iphone = p.devices["iPhone 14"]
@@ -217,12 +214,13 @@ async def main_scraping():
 
     todos_resultados.sort(key=lambda x: parse_fecha(x["fecha"]), reverse=True)
 
+    ultima_ejecucion_scraper = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(todos_resultados, f, ensure_ascii=False, indent=2)
 
     actualizar_historial_git(todos_resultados)
     print(f"[{datetime.now()}] ✅ Scraper ejecutado. {len(todos_resultados)} productos guardados en '{CACHE_FILE}'.")
-
 
 # ---------------- Tarea periódica ----------------
 def tarea_periodica():
@@ -236,21 +234,11 @@ def tarea_periodica():
         finally:
             time.sleep(30 * 60)
 
-
 # ---------------- API Flask ----------------
 app = Flask(__name__)
 
-
 def obtener_ip_real():
     return request.headers.get("X-Forwarded-For", request.remote_addr)
-
-
-@app.route("/")
-def index():
-    ip_cliente = obtener_ip_real()
-    print(f"[LOG] / accedido desde IP: {ip_cliente}")
-    return "API PIMA funcionando. Usa /precios para ver los datos."
-
 
 @app.route("/precios", methods=["GET"])
 def obtener_precios():
@@ -259,10 +247,19 @@ def obtener_precios():
     if os.path.exists(CACHE_FILE):
         with open(CACHE_FILE, "r", encoding="utf-8") as f:
             datos = json.load(f)
-        return Response(json.dumps(datos, ensure_ascii=False, indent=2), mimetype="application/json")
+        info = {
+            "ultima_ejecucion_scraper": ultima_ejecucion_scraper,
+            "ultima_actualizacion_git": ultima_actualizacion_git
+        }
+        return Response(json.dumps([info] + datos, ensure_ascii=False, indent=2), mimetype="application/json")
     else:
         return Response(json.dumps({"error": "No existe el archivo de cache"}, ensure_ascii=False), mimetype="application/json"), 404
 
+@app.route("/")
+def index():
+    ip_cliente = obtener_ip_real()
+    print(f"[LOG] / accedido desde IP: {ip_cliente}")
+    return "API PIMA funcionando. Usa /precios para ver los datos."
 
 @app.route("/actualizar", methods=["GET"])
 def actualizar():
@@ -276,16 +273,11 @@ def actualizar():
     except Exception as e:
         return Response(json.dumps({"status": "error", "mensaje": str(e)}, ensure_ascii=False), mimetype="application/json"), 500
 
-
 # ---------------- Ejecutar ----------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
 
-    # Scraping inicial
     threading.Thread(target=lambda: asyncio.run(main_scraping()), daemon=True).start()
-
-    # Hilo periódico
     threading.Thread(target=tarea_periodica, daemon=True).start()
 
-    # Ejecutar Flask
     app.run(host="0.0.0.0", port=port)

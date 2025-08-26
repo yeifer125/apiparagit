@@ -4,7 +4,8 @@ FROM python:3.10-slim
 # ---------- Variables de entorno ----------
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    REPO_URL=${REPO_URL}
 
 # ---------- Instalar dependencias del sistema ----------
 RUN apt-get update && apt-get install -y \
