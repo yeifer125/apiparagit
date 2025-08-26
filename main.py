@@ -9,6 +9,7 @@ from collections import OrderedDict
 from flask import Flask, Response, request
 from playwright.async_api import async_playwright
 import pdfplumber
+import shutil
 
 # ---------------- Rutas de archivos ----------------
 PDF_FOLDER = os.path.join(os.path.dirname(__file__), "pdfs")
@@ -17,24 +18,31 @@ CACHE_FILE = os.path.join(os.path.dirname(__file__), "datos_cache.json")
 # ---------------- Git historial ----------------
 REPO_URL = os.environ.get("REPO_URL")
 REPO_PATH = os.path.join(os.path.dirname(__file__), "iadatos")
+BRANCH_NAME = "main"
 
 def actualizar_historial_git(datos):
     if not REPO_URL:
         print("[WARN] REPO_URL no configurado, no se guardará historial.")
         return
 
-    os.makedirs(REPO_PATH, exist_ok=True)
+    # Eliminar repo parcial si no tiene .git
+    if os.path.exists(REPO_PATH) and not os.path.exists(os.path.join(REPO_PATH, ".git")):
+        shutil.rmtree(REPO_PATH)
 
-    # Inicializar git si no existe
+    # Clonar repo si no existe
     if not os.path.exists(os.path.join(REPO_PATH, ".git")):
-        subprocess.run(["git", "-C", REPO_PATH, "init"], check=True)
-        subprocess.run(["git", "-C", REPO_PATH, "remote", "add", "origin", REPO_URL], check=True)
+        subprocess.run(["git", "clone", REPO_URL, REPO_PATH], check=True)
+        os.chdir(REPO_PATH)
+        # Cambiar a main si no existe
+        subprocess.run(["git", "checkout", "-b", BRANCH_NAME], check=True)
+    else:
+        os.chdir(REPO_PATH)
+        subprocess.run(["git", "checkout", BRANCH_NAME], check=True)
 
-    # Configurar git local (solo para este repo)
-    subprocess.run(["git", "-C", REPO_PATH, "config", "user.email", "render@example.com"], check=True)
-    subprocess.run(["git", "-C", REPO_PATH, "config", "user.name", "RenderBot"], check=True)
+    # Configurar usuario local
+    subprocess.run(["git", "config", "user.email", "render@example.com"], check=True)
+    subprocess.run(["git", "config", "user.name", "RenderBot"], check=True)
 
-    # Cargar historial existente
     historial_file = os.path.join(REPO_PATH, "historial.json")
     if os.path.exists(historial_file):
         with open(historial_file, "r", encoding="utf-8") as f:
@@ -52,25 +60,17 @@ def actualizar_historial_git(datos):
     with open(historial_file, "w", encoding="utf-8") as f:
         json.dump(historial, f, ensure_ascii=False, indent=2)
 
-    # Git add y commit
-    subprocess.run(["git", "-C", REPO_PATH, "add", "."], check=True)
-
-    # Verificar si hay commits
-    res = subprocess.run(["git", "-C", REPO_PATH, "rev-parse", "--verify", "HEAD"], capture_output=True, text=True)
-    if res.returncode != 0:
-        # Commit inicial
-        subprocess.run(["git", "-C", REPO_PATH, "commit", "-m", "Commit inicial"], check=True)
-        subprocess.run(["git", "-C", REPO_PATH, "branch", "-M", "main"], check=True)
-        subprocess.run(["git", "-C", REPO_PATH, "push", "-u", "origin", "main"], check=True)
+    # Git add y commit si hay cambios
+    subprocess.run(["git", "add", "."], check=True)
+    status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
+    if status.stdout.strip():
+        subprocess.run(["git", "commit", "-m", f"Añadidos {len(nuevos)} productos al historial"], check=True)
+        # Pull con rebase para sincronizar con remoto
+        subprocess.run(["git", "pull", "--rebase", "origin", BRANCH_NAME], check=True)
+        # Push
+        subprocess.run(["git", "push", "origin", BRANCH_NAME], check=True)
     else:
-        # Commit normal si hay cambios
-        try:
-            subprocess.run(["git", "-C", REPO_PATH, "commit", "-m", f"Añadidos {len(nuevos)} productos al historial"], check=True)
-        except subprocess.CalledProcessError:
-            # No hay cambios para commit
-            print("ℹ️ No hay cambios para commitear.")
-        # Push normal
-        subprocess.run(["git", "-C", REPO_PATH, "push"], check=True)
+        print("✅ No hay cambios para hacer commit.")
 
 # ---------------- Funciones PDF/Web ----------------
 async def auto_scroll(page):
@@ -133,11 +133,9 @@ def extraer_todo_pdf(ruta_pdf):
                     parts = linea.split(":")
                     if len(parts) > 1:
                         fecha = parts[1].strip()
-
                 columnas = linea.split()
                 if len(columnas) < 5:
                     continue
-
                 valores = columnas[-4:]
                 try:
                     minimo = float(valores[0].replace(",", ""))
@@ -146,17 +144,13 @@ def extraer_todo_pdf(ruta_pdf):
                     promedio = float(valores[3].replace(",", ""))
                 except ValueError:
                     continue
-
                 mayorista = columnas[-5]
                 prod_nombre = " ".join(columnas[:-5])
                 unidad = mayorista
-
                 if not prod_nombre.strip() or prod_nombre.lower().startswith("producto"):
                     continue
-
                 if not fecha:
                     fecha = datetime.now().strftime("%d/%m/%Y")
-
                 resultados.append(OrderedDict([
                     ("producto", prod_nombre),
                     ("unidad", unidad),
