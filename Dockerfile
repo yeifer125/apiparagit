@@ -1,5 +1,5 @@
 # ---------- Imagen base ----------
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 # ---------- Variables de entorno ----------
 ENV PYTHONUNBUFFERED=1 \
@@ -8,42 +8,21 @@ ENV PYTHONUNBUFFERED=1 \
     REPO_URL=${REPO_URL}
 
 # ---------- Instalar dependencias del sistema ----------
-RUN apt-get update && apt-get install -y \
-    wget \
-    curl \
-    unzip \
-    fonts-liberation \
-    fonts-unifont \
-    libasound2 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libdbus-1-3 \
-    libdrm2 \
-    libxkbcommon0 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxfixes3 \
-    libxrandr2 \
-    libgbm1 \
-    libgtk-3-0 \
-    libnss3 \
-    libnspr4 \
-    libxshmfence1 \
-    libx11-6 \
-    gstreamer1.0-libav \
-    gstreamer1.0-plugins-good \
-    ca-certificates \
-    git \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget curl unzip fonts-liberation fonts-unifont \
+    libasound2 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdbus-1-3 \
+    libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+    libgbm1 libgtk-3-0 libnss3 libnspr4 libxshmfence1 libx11-6 \
+    gstreamer1.0-libav gstreamer1.0-plugins-good ca-certificates git \
     && rm -rf /var/lib/apt/lists/*
 
-# ---------- Establecer directorio de trabajo ----------
+# ---------- Directorio de trabajo ----------
 WORKDIR /app
 
 # ---------- Copiar dependencias ----------
 COPY requirements.txt .
 
-# ---------- Actualizar pip e instalar Python dependencies ----------
+# ---------- Instalar Python dependencies ----------
 RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
 
