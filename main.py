@@ -30,23 +30,19 @@ def actualizar_historial_git(datos):
         print("[WARN] REPO_URL no configurado, no se guardará historial.")
         return
 
-    # Eliminar repo parcial si no tiene .git
     if os.path.exists(REPO_PATH) and not os.path.exists(os.path.join(REPO_PATH, ".git")):
         shutil.rmtree(REPO_PATH)
 
-    # Clonar repo si no existe
     if not os.path.exists(os.path.join(REPO_PATH, ".git")):
         subprocess.run(["git", "clone", REPO_URL, REPO_PATH], check=True)
     os.chdir(REPO_PATH)
 
-    # Crear o cambiar a rama main
     res = subprocess.run(["git", "branch", "--list", BRANCH_NAME], capture_output=True, text=True)
     if BRANCH_NAME not in res.stdout:
         subprocess.run(["git", "checkout", "-b", BRANCH_NAME], check=True)
     else:
         subprocess.run(["git", "checkout", BRANCH_NAME], check=True)
 
-    # Configurar usuario local
     subprocess.run(["git", "config", "user.email", "render@example.com"], check=True)
     subprocess.run(["git", "config", "user.name", "RenderBot"], check=True)
 
@@ -66,7 +62,6 @@ def actualizar_historial_git(datos):
     with open(historial_file, "w", encoding="utf-8") as f:
         json.dump(historial, f, ensure_ascii=False, indent=2)
 
-    # Git add y commit si hay cambios
     subprocess.run(["git", "add", "."], check=True)
     status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
     if status.stdout.strip():
@@ -196,7 +191,13 @@ async def main_scraping():
 
         documentos = [dict(t) for t in {tuple(d.items()) for d in documentos}]
 
+        # 👇 FILTRO NUEVO: evita descargar PDFs de historial o 40 principales
         for i, doc in enumerate(documentos, 1):
+            texto_lower = doc['texto'].lower()
+            if "historial" in texto_lower or "40 principales" in texto_lower:
+                print(f"[INFO] Saltando PDF no deseado: {doc['texto']}")
+                continue
+
             nombre = f"{i}_{doc['texto'][:20].replace(' ', '_')}_{datetime.now().strftime('%Y%m%d%H%M')}.pdf"
             ruta_pdf = await descargar_archivo(context, doc['href'], nombre)
             if ruta_pdf:
