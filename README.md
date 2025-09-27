@@ -1,4 +1,4 @@
-# API PIMA – Scraper de Precios Agrícolas
+# API PIMA – Scraper de Precios Agrícolas yeifer
 
 Esta API en **Python + Flask** realiza scraping del boletín de precios agrícolas de [PIMA](https://www.pima.go.cr/boletin/), procesa PDFs con `pdfplumber` y expone los datos en formato JSON.  
 
