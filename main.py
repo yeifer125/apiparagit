@@ -10,17 +10,15 @@ from flask import Flask, Response, request
 from playwright.async_api import async_playwright
 import pdfplumber
 import shutil
+import gc  # 🧠 Garbage collector manual
 
-# ---------------- Rutas de archivos ----------------
 PDF_FOLDER = os.path.join(os.path.dirname(__file__), "pdfs")
 CACHE_FILE = os.path.join(os.path.dirname(__file__), "datos_cache.json")
 
-# ---------------- Git historial ----------------
 REPO_URL = os.environ.get("REPO_URL")
 REPO_PATH = os.path.join(os.path.dirname(__file__), "iadatos")
 BRANCH_NAME = "main"
 
-# Variables para API
 ultima_ejecucion_scraper = None
 ultima_actualizacion_git = None
 
@@ -29,33 +27,21 @@ def actualizar_historial_git(datos):
     if not REPO_URL:
         print("[WARN] REPO_URL no configurado, no se guardará historial.")
         return
-
-    # Eliminar repo parcial si no tiene .git
     if os.path.exists(REPO_PATH) and not os.path.exists(os.path.join(REPO_PATH, ".git")):
         shutil.rmtree(REPO_PATH)
 
-    # Clonar repo si no existe
     if not os.path.exists(os.path.join(REPO_PATH, ".git")):
         subprocess.run(["git", "clone", REPO_URL, REPO_PATH], check=True)
     os.chdir(REPO_PATH)
 
-    # Crear o cambiar a rama main
     res = subprocess.run(["git", "branch", "--list", BRANCH_NAME], capture_output=True, text=True)
-    if BRANCH_NAME not in res.stdout:
-        subprocess.run(["git", "checkout", "-b", BRANCH_NAME], check=True)
-    else:
-        subprocess.run(["git", "checkout", BRANCH_NAME], check=True)
+    subprocess.run(["git", "checkout", BRANCH_NAME if BRANCH_NAME in res.stdout else "-b", BRANCH_NAME], check=True)
 
-    # Configurar usuario local
     subprocess.run(["git", "config", "user.email", "render@example.com"], check=True)
     subprocess.run(["git", "config", "user.name", "RenderBot"], check=True)
 
     historial_file = os.path.join(REPO_PATH, "historial.json")
-    if os.path.exists(historial_file):
-        with open(historial_file, "r", encoding="utf-8") as f:
-            historial = json.load(f)
-    else:
-        historial = []
+    historial = json.load(open(historial_file, "r", encoding="utf-8")) if os.path.exists(historial_file) else []
 
     nuevos = [d for d in datos if d not in historial]
     if not nuevos:
@@ -66,39 +52,32 @@ def actualizar_historial_git(datos):
     with open(historial_file, "w", encoding="utf-8") as f:
         json.dump(historial, f, ensure_ascii=False, indent=2)
 
-    # Git add y commit si hay cambios
     subprocess.run(["git", "add", "."], check=True)
-    status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
-    if status.stdout.strip():
-        subprocess.run(["git", "commit", "-m", f"Añadidos {len(nuevos)} productos al historial"], check=True)
+    if subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True).stdout.strip():
+        subprocess.run(["git", "commit", "-m", f"Añadidos {len(nuevos)} productos"], check=True)
         try:
             subprocess.run(["git", "pull", "--rebase", "origin", BRANCH_NAME], check=True)
         except subprocess.CalledProcessError:
-            print("[WARN] No se pudo hacer pull, puede ser el primer push.")
+            print("[WARN] Pull fallido, posiblemente es el primer push.")
         subprocess.run(["git", "push", "origin", BRANCH_NAME], check=True)
         ultima_actualizacion_git = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-    else:
-        print("✅ No hay cambios para hacer commit.")
 
-# ---------------- Funciones PDF/Web ----------------
 async def auto_scroll(page):
-    await page.evaluate("""
-        async () => {
-            await new Promise(resolve => {
-                let totalHeight = 0;
-                const distance = 100;
-                const timer = setInterval(() => {
-                    const scrollHeight = document.body.scrollHeight;
-                    window.scrollBy(0, distance);
-                    totalHeight += distance;
-                    if(totalHeight >= scrollHeight){
-                        clearInterval(timer);
-                        resolve();
-                    }
-                }, 100);
-            });
-        }
-    """)
+    await page.evaluate("""async () => {
+        await new Promise(resolve => {
+            let totalHeight = 0;
+            const distance = 100;
+            const timer = setInterval(() => {
+                const scrollHeight = document.body.scrollHeight;
+                window.scrollBy(0, distance);
+                totalHeight += distance;
+                if (totalHeight >= scrollHeight) {
+                    clearInterval(timer);
+                    resolve();
+                }
+            }, 100);
+        });
+    }""")
 
 async def extraer_documentos(page_or_frame):
     return await page_or_frame.eval_on_selector_all(
@@ -115,60 +94,51 @@ async def descargar_archivo(context, url, nombre):
     ruta_archivo = os.path.join(PDF_FOLDER, nombre)
     if os.path.exists(ruta_archivo):
         return ruta_archivo
-    response = await context.request.get(url)
-    if response.status == 200:
-        contenido = await response.body()
-        if not contenido.startswith(b"%PDF"):
-            print(f"[WARN] El archivo {url} no es un PDF válido.")
-            return None
-        with open(ruta_archivo, "wb") as f:
-            f.write(contenido)
-        return ruta_archivo
+
+    # 🧠 Reintentos con backoff
+    for intento in range(3):
+        try:
+            response = await context.request.get(url, timeout=30000)
+            if response.status == 200:
+                contenido = await response.body()
+                if contenido.startswith(b"%PDF"):
+                    with open(ruta_archivo, "wb") as f:
+                        f.write(contenido)
+                    return ruta_archivo
+            print(f"[WARN] Archivo no válido en intento {intento+1}: {url}")
+        except Exception as e:
+            print(f"[WARN] Error descargando {url} intento {intento+1}: {e}")
+        await asyncio.sleep(2 * (intento + 1))
     return None
 
-# ---------------- Extraer productos PDF ----------------
 def extraer_todo_pdf(ruta_pdf):
     resultados = []
     fecha = ""
     with pdfplumber.open(ruta_pdf) as pdf:
         for pagina in pdf.pages:
-            texto = pagina.extract_text()
-            if not texto:
-                continue
+            texto = pagina.extract_text() or ""
             for linea in texto.split("\n"):
-                linea_lower = linea.lower()
-                if "fecha de plaza" in linea_lower:
-                    parts = linea.split(":")
-                    if len(parts) > 1:
-                        fecha = parts[1].strip()
-                columnas = linea.split()
-                if len(columnas) < 5:
-                    continue
-                valores = columnas[-4:]
+                if "fecha de plaza" in linea.lower():
+                    fecha = linea.split(":")[-1].strip() or fecha
+                cols = linea.split()
+                if len(cols) < 5: continue
                 try:
-                    minimo = float(valores[0].replace(",", ""))
-                    maximo = float(valores[1].replace(",", ""))
-                    moda = float(valores[2].replace(",", ""))
-                    promedio = float(valores[3].replace(",", ""))
+                    minimo, maximo, moda, promedio = map(lambda x: float(x.replace(",", "")), cols[-4:])
+                    mayorista = cols[-5]
+                    prod_nombre = " ".join(cols[:-5])
                 except ValueError:
                     continue
-                mayorista = columnas[-5]
-                prod_nombre = " ".join(columnas[:-5])
-                unidad = mayorista
-                if not prod_nombre.strip() or prod_nombre.lower().startswith("producto"):
-                    continue
-                if not fecha:
-                    fecha = datetime.now().strftime("%d/%m/%Y")
-                resultados.append(OrderedDict([
-                    ("producto", prod_nombre),
-                    ("unidad", unidad),
-                    ("mayorista", mayorista),
-                    ("minimo", str(minimo)),
-                    ("maximo", str(maximo)),
-                    ("moda", str(moda)),
-                    ("promedio", str(promedio)),
-                    ("fecha", fecha)
-                ]))
+                if prod_nombre.strip() and not prod_nombre.lower().startswith("producto"):
+                    resultados.append(OrderedDict([
+                        ("producto", prod_nombre),
+                        ("unidad", mayorista),
+                        ("mayorista", mayorista),
+                        ("minimo", str(minimo)),
+                        ("maximo", str(maximo)),
+                        ("moda", str(moda)),
+                        ("promedio", str(promedio)),
+                        ("fecha", fecha or datetime.now().strftime("%d/%m/%Y"))
+                    ]))
     return resultados
 
 def parse_fecha(fecha_str):
@@ -177,7 +147,6 @@ def parse_fecha(fecha_str):
     except:
         return datetime.min
 
-# ---------------- Scraping principal ----------------
 async def main_scraping():
     global ultima_ejecucion_scraper
     rutas_pdfs = []
@@ -189,40 +158,38 @@ async def main_scraping():
         await page.goto("https://www.pima.go.cr/boletin/", wait_until="networkidle")
         await auto_scroll(page)
 
-        documentos = []
-        documentos.extend(await extraer_documentos(page))
+        documentos = await extraer_documentos(page)
         for frame in page.frames:
             documentos.extend(await extraer_documentos(frame))
-
         documentos = [dict(t) for t in {tuple(d.items()) for d in documentos}]
 
         for i, doc in enumerate(documentos, 1):
-            nombre = f"{i}_{doc['texto'][:20].replace(' ', '_')}_{datetime.now().strftime('%Y%m%d%H%M')}.pdf"
+            nombre = f"{i}_{doc['texto'][:20].replace(' ', '_')}.pdf"
             ruta_pdf = await descargar_archivo(context, doc['href'], nombre)
-            if ruta_pdf:
-                rutas_pdfs.append(ruta_pdf)
+            if ruta_pdf: rutas_pdfs.append(ruta_pdf)
 
         await browser.close()
 
     todos_resultados = []
     for pdf_path in rutas_pdfs:
         try:
-            resultados = extraer_todo_pdf(pdf_path)
-            todos_resultados.extend(resultados)
+            todos_resultados.extend(extraer_todo_pdf(pdf_path))
         except Exception as e:
             print(f"[ERROR] No se pudo procesar {pdf_path}: {e}")
+        finally:
+            # 🧠 Liberar memoria: eliminar PDF tras procesarlo
+            os.remove(pdf_path)
 
     todos_resultados.sort(key=lambda x: parse_fecha(x["fecha"]), reverse=True)
-
     ultima_ejecucion_scraper = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(todos_resultados, f, ensure_ascii=False, indent=2)
 
     actualizar_historial_git(todos_resultados)
-    print(f"[{datetime.now()}] ✅ Scraper ejecutado. {len(todos_resultados)} productos guardados en '{CACHE_FILE}'.")
+    gc.collect()  # 🧠 Forzar limpieza de memoria
+    print(f"[{datetime.now()}] ✅ Scraper ejecutado. {len(todos_resultados)} productos guardados.")
 
-# ---------------- Tarea periódica ----------------
 def tarea_periodica():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -232,39 +199,27 @@ def tarea_periodica():
         except Exception as e:
             print(f"[ERROR] Falló la actualización periódica: {e}")
         finally:
+            gc.collect()
             time.sleep(30 * 60)
 
-# ---------------- API Flask ----------------
 app = Flask(__name__)
-
-def obtener_ip_real():
-    return request.headers.get("X-Forwarded-For", request.remote_addr)
 
 @app.route("/precios", methods=["GET"])
 def obtener_precios():
-    ip_cliente = obtener_ip_real()
-    print(f"[LOG] /precios accedido desde IP: {ip_cliente}")
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr)
+    print(f"[LOG] /precios desde IP: {ip}")
     if os.path.exists(CACHE_FILE):
-        with open(CACHE_FILE, "r", encoding="utf-8") as f:
-            datos = json.load(f)
-        info = {
-            "ultima_ejecucion_scraper": ultima_ejecucion_scraper,
-            "ultima_actualizacion_git": ultima_actualizacion_git
-        }
+        datos = json.load(open(CACHE_FILE, "r", encoding="utf-8"))
+        info = {"ultima_ejecucion_scraper": ultima_ejecucion_scraper, "ultima_actualizacion_git": ultima_actualizacion_git}
         return Response(json.dumps([info] + datos, ensure_ascii=False, indent=2), mimetype="application/json")
-    else:
-        return Response(json.dumps({"error": "No existe el archivo de cache"}, ensure_ascii=False), mimetype="application/json"), 404
+    return Response(json.dumps({"error": "No existe el archivo de cache"}, ensure_ascii=False), mimetype="application/json"), 404
 
 @app.route("/")
 def index():
-    ip_cliente = obtener_ip_real()
-    print(f"[LOG] / accedido desde IP: {ip_cliente}")
     return "API PIMA funcionando. Usa /precios para ver los datos."
 
 @app.route("/actualizar", methods=["GET"])
 def actualizar():
-    ip_cliente = obtener_ip_real()
-    print(f"[LOG] /actualizar accedido desde IP: {ip_cliente}")
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -273,11 +228,8 @@ def actualizar():
     except Exception as e:
         return Response(json.dumps({"status": "error", "mensaje": str(e)}, ensure_ascii=False), mimetype="application/json"), 500
 
-# ---------------- Ejecutar ----------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-
     threading.Thread(target=lambda: asyncio.run(main_scraping()), daemon=True).start()
     threading.Thread(target=tarea_periodica, daemon=True).start()
-
     app.run(host="0.0.0.0", port=port)
