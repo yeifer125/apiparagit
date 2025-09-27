@@ -178,7 +178,10 @@ async def main_scraping():
     rutas_pdfs = []
     async with async_playwright() as p:
         iphone = p.devices["iPhone 14"]
-        browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
+        browser = await p.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
+        )
         context = await browser.new_context(**iphone)
         page = await context.new_page()
         await page.goto("https://www.pima.go.cr/boletin/", wait_until="networkidle")
@@ -195,7 +198,7 @@ async def main_scraping():
         for i, doc in enumerate(documentos, 1):
             texto_lower = doc['texto'].lower()
             if "historial" in texto_lower or "40 principales" in texto_lower:
-                print(f"[INFO] Saltando PDF no deseado: {doc['texto']}")
+                print(f"[INFO] 🛑 Saltando PDF no deseado: {doc['texto']}")
                 continue
 
             nombre = f"{i}_{doc['texto'][:20].replace(' ', '_')}_{datetime.now().strftime('%Y%m%d%H%M')}.pdf"
@@ -203,8 +206,12 @@ async def main_scraping():
             if ruta_pdf:
                 rutas_pdfs.append(ruta_pdf)
 
+        # 🧠 Cierra Playwright antes de procesar PDFs
         await browser.close()
+        context = None
+        page = None
 
+    # ---------------- Procesar PDFs y liberar memoria ----------------
     todos_resultados = []
     for pdf_path in rutas_pdfs:
         try:
@@ -212,9 +219,10 @@ async def main_scraping():
             todos_resultados.extend(resultados)
         except Exception as e:
             print(f"[ERROR] No se pudo procesar {pdf_path}: {e}")
+        finally:
+            os.remove(pdf_path)  # 🧹 libera memoria y disco
 
     todos_resultados.sort(key=lambda x: parse_fecha(x["fecha"]), reverse=True)
-
     ultima_ejecucion_scraper = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
@@ -224,16 +232,13 @@ async def main_scraping():
     print(f"[{datetime.now()}] ✅ Scraper ejecutado. {len(todos_resultados)} productos guardados en '{CACHE_FILE}'.")
 
 # ---------------- Tarea periódica ----------------
-def tarea_periodica():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+async def tarea_periodica_async():
     while True:
         try:
-            loop.run_until_complete(main_scraping())
+            await main_scraping()
         except Exception as e:
             print(f"[ERROR] Falló la actualización periódica: {e}")
-        finally:
-            time.sleep(30 * 60)
+        await asyncio.sleep(30 * 60)  # no bloquea el loop
 
 # ---------------- API Flask ----------------
 app = Flask(__name__)
@@ -277,8 +282,6 @@ def actualizar():
 # ---------------- Ejecutar ----------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-
-    threading.Thread(target=lambda: asyncio.run(main_scraping()), daemon=True).start()
-    threading.Thread(target=tarea_periodica, daemon=True).start()
-
+    # ✅ Solo hilo de tarea periódica, evita doble ejecución
+    threading.Thread(target=lambda: asyncio.run(tarea_periodica_async()), daemon=True).start()
     app.run(host="0.0.0.0", port=port)
