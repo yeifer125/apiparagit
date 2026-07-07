@@ -140,11 +140,32 @@ def extraer_todo_pdf(ruta_pdf):
                 if len(columnas) < 5:
                     continue
                 valores = columnas[-4:]
+
+                def parse_precio(valor):
+                    valor = valor.strip()
+                    # Caso miles + decimal: 1.234,56 o 1,234.56
+                    if "," in valor and "." in valor:
+                        if valor.rfind(",") > valor.rfind("."):
+                            # formato europeo/CR: 1.234,56 -> punto=miles, coma=decimal
+                            valor = valor.replace(".", "").replace(",", ".")
+                        else:
+                            # formato US: 1,234.56 -> coma=miles
+                            valor = valor.replace(",", "")
+                    elif "," in valor:
+                        # Solo coma. Si son exactamente 2 decimales -> decimal (700,00 = 700.00)
+                        # Si no (ej: 70,000) -> separador de miles
+                        parte = valor.split(",")[-1]
+                        if len(parte) == 2:
+                            valor = valor.replace(",", ".")
+                        else:
+                            valor = valor.replace(",", "")
+                    return float(valor)
+
                 try:
-                    minimo = float(valores[0].replace(",", ""))
-                    maximo = float(valores[1].replace(",", ""))
-                    moda = float(valores[2].replace(",", ""))
-                    promedio = float(valores[3].replace(",", ""))
+                    minimo = parse_precio(valores[0])
+                    maximo = parse_precio(valores[1])
+                    moda = parse_precio(valores[2])
+                    promedio = parse_precio(valores[3])
                 except ValueError:
                     continue
                 mayorista = columnas[-5]
